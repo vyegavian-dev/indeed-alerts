@@ -1,0 +1,13 @@
+{
+  "name": "actua-indeed-alerts",
+  "version": "1.0.0",
+  "description": "Setup automatique des alertes CV Indeed pour Actua",
+  "main": "setup_indeed_alerts.js",
+  "scripts": {
+    "start": "node setup_indeed_alerts.js",
+    "install-browser": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.44.0"
+  }
+}
