@@ -41,18 +41,30 @@ function waitEnter(q) {
 async function waitForSalesforceReady(sfPage) {
   log('Salesforce ouvert — connecte-toi si besoin.', 'warn');
   log('Le script reprend automatiquement une fois connecté.', 'warn');
+
   const deadline = Date.now() + 180_000; // 3 min max
   while (Date.now() < deadline) {
     try {
       const url = sfPage.url();
       if (url.includes('lightning.force.com') || url.includes('IndeedAccountSearch')) {
-        await sfPage.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
-        await sleep(2000);
-        log('Salesforce prêt ✓', 'success');
-        return;
+        // Attendre que le composant Lightning soit rendu (input visible)
+        const inputReady = await sfPage.evaluate(() => {
+          function deepFindAll(root) {
+            const r = [];
+            root.querySelectorAll('input').forEach(el => r.push(el));
+            root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) r.push(...deepFindAll(el.shadowRoot)); });
+            return r;
+          }
+          return !!deepFindAll(document).find(i => /email/i.test(i.placeholder) || /resume/i.test(i.placeholder));
+        }).catch(() => false);
+
+        if (inputReady) {
+          log('Salesforce prêt ✓', 'success');
+          return;
+        }
       }
     } catch(e) {}
-    await sleep(1500);
+    await sleep(1000);
   }
   throw new Error('Timeout Salesforce (3 min)');
 }
