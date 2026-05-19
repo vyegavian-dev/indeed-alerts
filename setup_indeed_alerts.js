@@ -60,7 +60,25 @@ async function waitForSalesforceReady(sfPage) {
 async function sfFillAndSearch(sfPage, email) {
   log(`Salesforce → ${email}`, 'step');
   await sfPage.goto(SALESFORCE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await sleep(1500);
+
+  // Attendre que le composant Lightning charge l'input (shadow DOM)
+  let inputFound = false;
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    inputFound = await sfPage.evaluate(() => {
+      function deepFindAll(root) {
+        const r = [];
+        root.querySelectorAll('input').forEach(el => r.push(el));
+        root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) r.push(...deepFindAll(el.shadowRoot)); });
+        return r;
+      }
+      const all = deepFindAll(document);
+      return !!all.find(i => /email/i.test(i.placeholder) || /resume/i.test(i.placeholder));
+    }).catch(() => false);
+    if (inputFound) break;
+    await sleep(800);
+  }
+  if (!inputFound) throw new Error('Input Salesforce introuvable après 15s');
 
   await sfPage.evaluate((emailVal) => {
     function deepFindAll(root) {
