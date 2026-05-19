@@ -1,5 +1,5 @@
 /**
- * ACTUA — Alertes CV Indeed v13
+ * Indeed Smart Sourcing — Alertes CV v13
  * npm init -y && npm install playwright && npx playwright install chromium
  * node setup_indeed_alerts.js --agency "Actua BELFORT"
  */
@@ -8,7 +8,13 @@ const { chromium } = require('playwright');
 const fs       = require('fs');
 const readline = require('readline');
 
-const ALERTS_DATA   = JSON.parse(fs.readFileSync('alerts_data.json', 'utf8'));
+const RAW_DATA      = JSON.parse(fs.readFileSync('alerts_data.json', 'utf8'));
+// Support both formats: array of recruiters OR {licenseAccount, recruiters:[...]}
+const ALERTS_DATA   = Array.isArray(RAW_DATA) ? RAW_DATA : (RAW_DATA.recruiters || RAW_DATA);
+const LICENSE_ACCOUNT_PATTERN = new RegExp(
+  Array.isArray(RAW_DATA) ? 'ideuzo for actua' : (RAW_DATA.licenseAccount || 'ideuzo for actua'),
+  'i'
+);
 const DRY_RUN       = process.argv.includes('--dry-run');
 const SINGLE_AGENCY = (() => { const i = process.argv.indexOf('--agency'); return i !== -1 ? process.argv[i+1] : null; })();
 const LIMIT         = (() => { const i = process.argv.indexOf('--limit');  return i !== -1 ? parseInt(process.argv[i+1]) : null; })();
@@ -16,7 +22,7 @@ const FROM          = (() => { const i = process.argv.indexOf('--from');   retur
 
 const SALESFORCE_URL          = 'https://indeedinc.lightning.force.com/lightning/n/IndeedAccountSearch';
 const RESUMES_URL             = 'https://resumes.indeed.com/?co=FR&hl=fr&prevCo=FR';
-const LICENSE_ACCOUNT_PATTERN = /ideuzo for actua/i;
+// LICENSE_ACCOUNT_PATTERN est lu dynamiquement depuis alerts_data.json (champ licenseAccount)
 
 if (!fs.existsSync('screenshots')) fs.mkdirSync('screenshots');
 
@@ -186,80 +192,78 @@ async function dismissAllPopups(page) {
 }
 
 async function switchToLicenseAccount(page) {
-  // Vérifier si déjà sur le bon compte
-  const alreadyOk = await page.evaluate((pat) => {
+  // ── Vérifier si on est déjà sur le bon compte ──────────────────────────────
+  // Cas Hoerdt et similaires : "Login As Advertiser" atterrit directement sur Ideuzo
+  const checkAlready = async () => page.evaluate((pat) => {
     return new RegExp(pat, 'i').test(document.querySelector('header, nav')?.textContent || '');
   }, LICENSE_ACCOUNT_PATTERN.source).catch(() => false);
-  if (alreadyOk) { log('Déjà sur le compte licences ✓', 'success'); return; }
+
+  // Attendre que la page se stabilise (max 5s) puis vérifier
+  await sleep(2000);
+  if (await checkAlready()) {
+    log('Déjà sur le compte licences ✓ (pas de switch nécessaire)', 'success');
+    return;
+  }
 
   log('Basculement vers le compte de licences...', 'step');
 
-  // Attendre que la page se stabilise (les popups arrivent avec un délai)
-  await sleep(3000);
-
-  // 1. Fermer bandeau cookies s'il est là
+  // ── 1. Fermer les popups bloquants ─────────────────────────────────────────
+  // Cookies
   try {
     const c = page.locator('button:has-text("Tout refuser"), button:has-text("Autoriser tous les cookies")').first();
-    if (await c.isVisible({ timeout: 2000 })) { await c.click(); log('Cookies fermé', 'step'); await sleep(600); }
+    if (await c.isVisible({ timeout: 2000 })) { await c.click(); log('Cookies fermé', 'step'); await sleep(500); }
   } catch(e) {}
 
-  // 2. Attendre et fermer le popup "OK" — il apparaît avec un délai, on attend jusqu'à 8s
+  // Popup "Changez facilement de compte" → bouton OK
+  // On attend jusqu'à 6s (il arrive avec un délai)
   try {
     const ok = page.locator('button:has-text("OK")').first();
-    await ok.waitFor({ state: 'visible', timeout: 8000 });
+    await ok.waitFor({ state: 'visible', timeout: 6000 });
     await ok.click();
     log('Popup OK fermé ✓', 'step');
-    await sleep(1000);
-  } catch(e) { log('Pas de popup OK détecté', 'info'); }
+    await sleep(800);
+    // Re-vérifier : parfois le popup OK apparaît justement parce qu'on est déjà sur Ideuzo
+    if (await checkAlready()) {
+      log('Déjà sur le compte licences après popup ✓', 'success');
+      return;
+    }
+  } catch(e) { log('Pas de popup OK', 'info'); }
 
-  // 3. Cliquer sur le bouton employeur dans le header
-  //    "ACTUA BELFORT / belfort@actua.fr" — on cherche avec getByText sur le header
-  let clicked = false;
+  // ── 2. Ouvrir le modal switcher ─────────────────────────────────────────────
   try {
-    // Chercher le bouton/div qui affiche le nom de l'agence dans le header
     const headerEmployer = page.locator('header').getByText(/@actua\.fr/i).first();
     if (await headerEmployer.isVisible({ timeout: 3000 })) {
       await headerEmployer.click();
-      clicked = 'getByText email';
+      log('Switcher ouvert (email header)', 'step');
     }
-  } catch(e) {}
-
-  if (!clicked) {
-    // Fallback JS : chercher dans le header l'élément avec le moins d'enfants qui contient @
+  } catch(e) {
     await page.evaluate(() => {
       const header = document.querySelector('header');
       if (!header) return;
       const all = Array.from(header.querySelectorAll('button, a, [role="button"]'));
-      const t = all.find(el => /@/.test(el.textContent) || /actua belfort/i.test(el.textContent));
-      if (t) { t.click(); return; }
-      // Dernier recours : avant-dernier bouton du header
-      if (all.length >= 2) all[all.length - 2].click();
+      const t = all.find(el => /@/.test(el.textContent) || /actua/i.test(el.textContent))
+             || all[all.length - 2];
+      if (t) t.click();
     });
-    clicked = 'JS fallback';
+    log('Switcher ouvert (JS fallback)', 'step');
   }
+  await sleep(2000);
 
-  log(`Header cliqué : ${clicked}`, 'step');
-
-  log(`Header cliqué : ${clicked}`, clicked ? 'step' : 'warn');
-  await sleep(2000); // Attendre que le modal s'anime
-
-  await page.screenshot({ path: 'screenshots/switcher_open.png' });
-  log('Screenshot modal → screenshots/switcher_open.png', 'info');
-
-  // 3. Chercher "Ideuzo for Actua" dans le modal
-  //    Le modal contient une liste d'entreprises — on cherche le texte exact
+  // ── 3. Cliquer "Ideuzo for Actua" dans le modal ────────────────────────────
   const ideuzoLocator = page.getByText('Ideuzo for Actua', { exact: false }).first();
   const visible = await ideuzoLocator.isVisible({ timeout: 5000 }).catch(() => false);
 
   if (visible) {
-    // Clic JS pour contourner l'overlay ifl-portal qui intercepte les pointer events
     await ideuzoLocator.evaluate(el => el.click());
     log('"Ideuzo for Actua" cliqué ✓', 'success');
     await sleep(2500);
     await page.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {});
-    await dismissAllPopups(page);
+    // Fermer popup OK post-switch si présent
+    try {
+      const ok2 = page.locator('button:has-text("OK")').first();
+      if (await ok2.isVisible({ timeout: 2000 })) { await ok2.click(); await sleep(500); }
+    } catch(e) {}
   } else {
-    // Dernier recours : screenshot + ENTRÉE manuelle
     await page.screenshot({ path: 'screenshots/ideuzo_not_found.png' });
     log('Ideuzo for Actua non trouvé — sélection manuelle requise', 'warn');
     await waitEnter('  ✋  Sélectionne "Ideuzo for Actua" dans le navigateur puis ENTRÉE...\n');
@@ -336,6 +340,17 @@ async function createOneAlert(page, alert, agencySlug, alertIdx) {
     await alertLink.click();
     await sleep(1500);
 
+    // ── Fermer le bandeau cookies s'il recouvre la modal ──────────────────────
+    try {
+      const cookie = page.locator('#onetrust-accept-btn-handler, button:has-text("Tout refuser"), button:has-text("Autoriser tous les cookies")').first();
+      if (await cookie.isVisible({ timeout: 1500 })) {
+        await cookie.evaluate(el => el.click());
+        log('  Cookie banner fermé avant modal', 'step');
+        await sleep(500);
+      }
+    } catch(e) {}
+
+    // ── Remplir le nom de l'alerte ────────────────────────────────────────────
     const nameInput = page.locator([
       'input[name="alertName"]', 'input[placeholder*="nom"]',
       'input[placeholder*="Name"]', '[role="dialog"] input[type="text"]',
@@ -347,12 +362,41 @@ async function createOneAlert(page, alert, agencySlug, alertIdx) {
       await sleep(300);
     }
 
-    // Enregistrer — clic JS pour contourner l'overlay onetrust qui intercepte les events
-    const saveBtn = page.locator('[data-cauto-id="serp_saved-search-modal_save-button"], button:has-text("Enregistrer"), button:has-text("Save")').first();
+    // ── Cliquer Enregistrer ───────────────────────────────────────────────────
+    // On cible par data-cauto-id (sélecteur stable) en priorité
+    const saveBtn = page.locator('[data-cauto-id="serp_saved-search-modal_save-button"]')
+      .or(page.locator('button:has-text("Enregistrer"), button:has-text("Save")').first());
     await saveBtn.waitFor({ state: 'visible', timeout: 8000 });
-    // Forcer le clic via JS (bypass l'overlay onetrust-consent-sdk)
+
+    // 1ère tentative : clic JS (bypass onetrust overlay)
     await saveBtn.evaluate(el => el.click());
-    await sleep(2000);
+    await sleep(1000);
+
+    // Vérifier que la modal s'est fermée
+    const modalGone = await saveBtn.isHidden({ timeout: 3000 }).catch(() => false);
+    if (!modalGone) {
+      // 2ème tentative : force click Playwright
+      log('  Retry Enregistrer (force click)...', 'step');
+      await saveBtn.click({ force: true });
+      await sleep(1000);
+      // 3ème tentative : scroll + click
+      const stillThere = await saveBtn.isVisible().catch(() => false);
+      if (stillThere) {
+        await saveBtn.scrollIntoViewIfNeeded();
+        await saveBtn.evaluate(el => el.click());
+        await sleep(1000);
+      }
+    }
+
+    // Confirmer le succès : la modal doit être fermée
+    const confirmed = await saveBtn.isHidden({ timeout: 3000 }).catch(() => false);
+    if (!confirmed) {
+      await page.screenshot({ path: `screenshots/save_failed_${agencySlug}_${alertIdx}.png` });
+      log(`  ⚠️  Modal toujours ouverte après 3 tentatives`, 'warn');
+      return { status: 'save_failed', job: alert.job };
+    }
+
+    await sleep(1000);
 
     log(`  ✅ "${alert.job}"`, 'success');
     return { status: 'success', job: alert.job };
@@ -368,7 +412,7 @@ async function createOneAlert(page, alert, agencySlug, alertIdx) {
 
 async function main() {
   console.log('\n══════════════════════════════════════════════════════════════');
-  console.log('  🎯  ACTUA — Alertes CV Indeed  [v13]');
+  console.log('  🎯  Indeed — Alertes CV Smart Sourcing  [v13]');
   console.log('══════════════════════════════════════════════════════════════\n');
 
   let agencies = ALERTS_DATA.slice(FROM);
@@ -378,10 +422,10 @@ async function main() {
   }
   if (LIMIT) {
     agencies = agencies.slice(0, LIMIT);
-    log(`Limite : ${LIMIT} agence(s)`, 'info');
+    log(`Limite : ${LIMIT} recruteur(s)`, 'info');
   }
-  if (FROM > 0 && !SINGLE_AGENCY) log(`Départ depuis agence #${FROM + 1}`, 'info');
-  log(`${agencies.length} agence(s) — ${agencies.reduce((s,a)=>s+a.alerts.length,0)} alertes`, 'info');
+  if (FROM > 0 && !SINGLE_AGENCY) log(`Départ depuis recruteur #${FROM + 1}`, 'info');
+  log(`${agencies.length} recruteur(s) — ${agencies.reduce((s,a)=>s+a.alerts.length,0)} alertes`, 'info');
 
   const browser  = await chromium.launch({ headless: false, slowMo: 120, args: ['--start-maximized'] });
   const context  = await browser.newContext({ locale: 'fr-FR', viewport: { width: 1440, height: 900 } });
@@ -399,11 +443,11 @@ async function main() {
 
   for (let i = 0; i < agencies.length; i++) {
     const ag     = agencies[i];
-    const agSlug = ag.agency.replace(/[^a-zA-Z0-9]/g, '_');
+    const agSlug = ( ag.agency || ag.email || ag.email || 'agency' ).replace(/[^a-zA-Z0-9]/g, '_');
     console.log('\n──────────────────────────────────────────────────────────────');
-    log(`[${i+1}/${agencies.length}] ${ag.agency} — ${ag.email}`, 'info');
+    log(`[${i+1}/${agencies.length}] ${ag.agency || ag.email} — ${ag.email}`, 'info');
 
-    const agRep = { agency: ag.agency, email: ag.email, total: ag.alerts.length, success:0, skipped:0, errors:0, results:[] };
+    const agRep = { agency: ag.agency || ag.email, email: ag.email, total: ag.alerts.length, success:0, skipped:0, errors:0, results:[] };
 
     try {
       await sfFillAndSearch(sfPage, ag.email);
@@ -435,13 +479,11 @@ async function main() {
         await sleep(1500 + Math.random() * 1500); // délai aléatoire 1.5-3s
       }
 
-      await sfPage.bringToFront();
 
     } catch(err) {
       log(`Erreur : ${err.message}`, 'error');
       agRep.global_error = err.message;
       await sfPage.screenshot({ path: `screenshots/${i+1}_ERREUR.png` }).catch(()=>{});
-      await sfPage.bringToFront();
     }
 
     rapport.agencies.push(agRep);
