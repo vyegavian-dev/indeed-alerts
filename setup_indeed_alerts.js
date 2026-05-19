@@ -1,7 +1,7 @@
 /**
  * Indeed Smart Sourcing — Alertes CV v13
  * npm init -y && npm install playwright && npx playwright install chromium
- * node setup_indeed_alerts.js --agency "Actua BELFORT"
+ * node setup_indeed_alerts.js --agency "email@domaine.com"
  */
 
 const { chromium } = require('playwright');
@@ -11,8 +11,10 @@ const readline = require('readline');
 const RAW_DATA      = JSON.parse(fs.readFileSync('alerts_data.json', 'utf8'));
 // Support both formats: array of recruiters OR {licenseAccount, recruiters:[...]}
 const ALERTS_DATA   = Array.isArray(RAW_DATA) ? RAW_DATA : (RAW_DATA.recruiters || RAW_DATA);
-const LICENSE_ACCOUNT_STR = Array.isArray(RAW_DATA) ? 'ideuzo for actua' : (RAW_DATA.licenseAccount || 'ideuzo for actua');
-const LICENSE_ACCOUNT_PATTERN = new RegExp(LICENSE_ACCOUNT_STR, 'i');
+const LICENSE_ACCOUNT_STR     = Array.isArray(RAW_DATA) ? 'license account' : (RAW_DATA.licenseAccount || 'license account');
+// Nettoyer les emojis et caractères spéciaux pour le regex
+const LICENSE_ACCOUNT_CLEAN   = LICENSE_ACCOUNT_STR.replace(/[^\w\s\-]/g, '').trim();
+const LICENSE_ACCOUNT_PATTERN = new RegExp(LICENSE_ACCOUNT_CLEAN, 'i');
 const DRY_RUN       = process.argv.includes('--dry-run');
 const SINGLE_AGENCY = (() => { const i = process.argv.indexOf('--agency'); return i !== -1 ? process.argv[i+1] : null; })();
 const LIMIT         = (() => { const i = process.argv.indexOf('--limit');  return i !== -1 ? parseInt(process.argv[i+1]) : null; })();
@@ -37,9 +39,22 @@ function waitEnter(q) {
 // ─── SALESFORCE : attendre auto que la searchbar soit prête ──────────────────
 
 async function waitForSalesforceReady(sfPage) {
-  log('Salesforce ouvert.', 'warn');
-  log('Connecte-toi à Salesforce si ce n\'est pas déjà fait.', 'warn');
-  await waitEnter('  ✋  ENTRÉE quand tu es connecté et sur la page de recherche...\n');
+  log('Salesforce ouvert — connecte-toi si besoin.', 'warn');
+  log('Le script reprend automatiquement une fois connecté.', 'warn');
+  const deadline = Date.now() + 180_000; // 3 min max
+  while (Date.now() < deadline) {
+    try {
+      const url = sfPage.url();
+      if (url.includes('lightning.force.com') || url.includes('IndeedAccountSearch')) {
+        await sfPage.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
+        await sleep(2000);
+        log('Salesforce prêt ✓', 'success');
+        return;
+      }
+    } catch(e) {}
+    await sleep(1500);
+  }
+  throw new Error('Timeout Salesforce (3 min)');
 }
 
 async function sfFillAndSearch(sfPage, email) {
@@ -212,7 +227,7 @@ async function switchToLicenseAccount(page) {
 
   // ── 2. Ouvrir le modal switcher ─────────────────────────────────────────────
   try {
-    const headerEmployer = page.locator('header').getByText(/@actua\.fr/i).first();
+    const headerEmployer = page.locator('header').getByText(/@/).first();
     if (await headerEmployer.isVisible({ timeout: 3000 })) {
       await headerEmployer.click();
       log('Switcher ouvert (email header)', 'step');
@@ -222,7 +237,7 @@ async function switchToLicenseAccount(page) {
       const header = document.querySelector('header');
       if (!header) return;
       const all = Array.from(header.querySelectorAll('button, a, [role="button"]'));
-      const t = all.find(el => /@/.test(el.textContent) || /actua/i.test(el.textContent))
+      const t = all.find(el => /@/.test(el.textContent))
              || all[all.length - 2];
       if (t) t.click();
     });
@@ -230,24 +245,23 @@ async function switchToLicenseAccount(page) {
   }
   await sleep(2000);
 
-  // ── 3. Cliquer "Ideuzo for Actua" dans le modal ────────────────────────────
-  const ideuzoLocator = page.getByText('Ideuzo for Actua', { exact: false }).first();
+  // ── 3. Cliquer le compte licences dans le modal ────────────────────────────
+  const ideuzoLocator = page.getByText(LICENSE_ACCOUNT_STR, { exact: false }).first();
   const visible = await ideuzoLocator.isVisible({ timeout: 5000 }).catch(() => false);
 
   if (visible) {
     await ideuzoLocator.evaluate(el => el.click());
-    log('"Ideuzo for Actua" cliqué ✓', 'success');
+    log(`"${LICENSE_ACCOUNT_STR}" cliqué ✓`, 'success');
     await sleep(2500);
     await page.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {});
-    // Fermer popup OK post-switch si présent
     try {
       const ok2 = page.locator('button:has-text("OK")').first();
       if (await ok2.isVisible({ timeout: 2000 })) { await ok2.click(); await sleep(500); }
     } catch(e) {}
   } else {
     await page.screenshot({ path: 'screenshots/ideuzo_not_found.png' });
-    log('Ideuzo for Actua non trouvé — sélection manuelle requise', 'warn');
-    await waitEnter('  ✋  Sélectionne "Ideuzo for Actua" dans le navigateur puis ENTRÉE...\n');
+    log(`"${LICENSE_ACCOUNT_STR}" non trouvé — sélection manuelle requise`, 'warn');
+    await waitEnter(`  ✋  Sélectionne "${LICENSE_ACCOUNT_STR}" dans le navigateur puis ENTRÉE...\n`);
   }
 }
 
