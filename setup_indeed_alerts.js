@@ -39,25 +39,9 @@ function waitEnter(q) {
 // ─── SALESFORCE : attendre auto que la searchbar soit prête ──────────────────
 
 async function waitForSalesforceReady(sfPage) {
-  log('Attente Salesforce...', 'step');
-  const deadline = Date.now() + 120_000; // 2 min max
-  while (Date.now() < deadline) {
-    try {
-      const ready = await sfPage.evaluate(() => {
-        function deepFindAll(root) {
-          const r = [];
-          root.querySelectorAll('input').forEach(el => r.push(el));
-          root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) r.push(...deepFindAll(el.shadowRoot)); });
-          return r;
-        }
-        const inputs = deepFindAll(document);
-        return !!inputs.find(i => /email/i.test(i.placeholder) || /resume/i.test(i.placeholder));
-      });
-      if (ready) { log('Salesforce prêt ✓', 'success'); return; }
-    } catch(e) {}
-    await sleep(1500);
-  }
-  throw new Error('Timeout — Salesforce non prêt après 2 min');
+  log('Salesforce ouvert.', 'warn');
+  log('Connecte-toi à Salesforce si ce n\'est pas déjà fait.', 'warn');
+  await waitEnter('  ✋  ENTRÉE quand tu es connecté et sur la page de recherche...\n');
 }
 
 async function sfFillAndSearch(sfPage, email) {
