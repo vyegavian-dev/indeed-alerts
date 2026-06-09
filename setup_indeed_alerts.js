@@ -290,9 +290,9 @@ async function switchToLicenseAccount(page) {
       if (await ok2.isVisible({ timeout: 2000 })) { await ok2.click(); await sleep(500); }
     } catch(e) {}
   } else {
-    await page.screenshot({ path: 'screenshots/ideuzo_not_found.png' });
-    log(`"${LICENSE_ACCOUNT_STR}" non trouvé — sélection manuelle requise`, 'warn');
-    await waitEnter(`  ✋  Sélectionne "${LICENSE_ACCOUNT_STR}" dans le navigateur puis ENTRÉE...\n`);
+    await page.screenshot({ path: `screenshots/ideuzo_not_found.png` });
+    log(`"${LICENSE_ACCOUNT_STR}" non trouvé — recruteur ignoré (compte non éligible)`, 'warn');
+    throw new Error(`Compte licences "${LICENSE_ACCOUNT_STR}" non trouvé — recruteur ignoré`);
   }
 }
 
@@ -454,7 +454,16 @@ async function main() {
   log(`${agencies.length} recruteur(s) — ${agencies.reduce((s,a)=>s+a.alerts.length,0)} alertes`, 'info');
   log(`Compte licences : "${LICENSE_ACCOUNT_STR}"`, 'info');
 
-  const browser  = await chromium.launch({ headless: false, slowMo: 120, args: ['--start-maximized'] });
+  const browser  = await chromium.launch({
+    headless: false,
+    slowMo: 120,
+    args: [
+      '--start-maximized',
+      '--disable-features=FocusOnTabCreate',  // empêche le focus sur nouvelle tab
+      '--no-first-run',
+      '--disable-background-timer-throttling',
+    ]
+  });
   const context  = await browser.newContext({ locale: 'fr-FR', viewport: { width: 1440, height: 900 } });
   const sfPage   = await context.newPage();
 
@@ -485,6 +494,16 @@ async function main() {
       await sfFillAndSearch(sfPage, ag.email);
 
       const newPage = await clickLoginAsAdvertiser(context, sfPage);
+
+      // Vérifier que la page est réellement utilisable
+      const pageUrl = newPage.url();
+      if (!pageUrl || pageUrl === 'about:blank') {
+        await sleep(3000);
+        const urlAfterWait = newPage.url();
+        if (!urlAfterWait || urlAfterWait === 'about:blank') {
+          throw new Error('Onglet ouvert vide — Login As Advertiser a échoué pour ce recruteur');
+        }
+      }
 
       if (!passwordDone) {
         await waitUntilLoggedIn(newPage);
