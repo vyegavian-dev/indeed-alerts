@@ -475,6 +475,13 @@ async function main() {
     const agRep = { agency: ag.agency || ag.email, email: ag.email, total: ag.alerts.length, success:0, skipped:0, errors:0, results:[] };
 
     try {
+      // Fermer l'onglet du recruteur précédent AVANT de cliquer Login As Advertiser
+      // pour forcer l'ouverture d'un nouvel onglet propre
+      if (indeedPage && indeedPage !== sfPage) {
+        await indeedPage.close().catch(() => {});
+        indeedPage = null;
+      }
+
       await sfFillAndSearch(sfPage, ag.email);
 
       const newPage = await clickLoginAsAdvertiser(context, sfPage);
@@ -487,9 +494,6 @@ async function main() {
         await newPage.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {});
       }
 
-      if (indeedPage && indeedPage !== sfPage && indeedPage !== newPage) {
-        await indeedPage.close().catch(() => {});
-      }
       indeedPage = newPage;
 
       await switchToLicenseAccount(indeedPage);
