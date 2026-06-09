@@ -495,6 +495,11 @@ async function main() {
 
       const newPage = await clickLoginAsAdvertiser(context, sfPage);
 
+      // Fix 1: si aucun onglet Indeed n'a été ouvert, le script a récupéré sfPage en fallback → erreur
+      if (newPage === sfPage) {
+        throw new Error('Login As Advertiser n\'a pas ouvert de nouvel onglet — recruteur ignoré');
+      }
+
       // Vérifier que la page est réellement utilisable
       const pageUrl = newPage.url();
       if (!pageUrl || pageUrl === 'about:blank') {
@@ -505,13 +510,10 @@ async function main() {
         }
       }
 
-      if (!passwordDone) {
-        await waitUntilLoggedIn(newPage);
-        passwordDone = true;
-      } else {
-        await sleep(2000);
-        await newPage.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {});
-      }
+      // Fix 2: toujours vérifier si une page de login est affichée, peu importe passwordDone
+      // (certains comptes déclenchent un re-login même après la 1ère connexion)
+      await waitUntilLoggedIn(newPage);
+      passwordDone = true;
 
       indeedPage = newPage;
 
