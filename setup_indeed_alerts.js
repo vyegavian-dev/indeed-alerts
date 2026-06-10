@@ -124,21 +124,41 @@ async function sfFillAndSearch(sfPage, email) {
 async function clickLoginAsAdvertiser(context, sfPage) {
   log('Clic "Login As Advertiser"...', 'step');
   await sleep(1000);
-  const [newPage] = await Promise.all([
-    context.waitForEvent('page', { timeout: 20000 }).catch(() => null),
-    sfPage.evaluate(() => {
-      function deepClick(root) {
-        for (const el of root.querySelectorAll('a, button, span')) {
-          if (/login\s*as\s*advertiser/i.test(el.textContent || '')) { el.click(); return true; }
-        }
-        for (const el of root.querySelectorAll('*')) {
-          if (el.shadowRoot && deepClick(el.shadowRoot)) return true;
-        }
-        return false;
+
+  const tryClick = () => sfPage.evaluate(() => {
+    function deepClick(root) {
+      for (const el of root.querySelectorAll('a, button, span')) {
+        if (/login\s*as\s*advertiser/i.test(el.textContent || '')) { el.click(); return true; }
       }
-      return deepClick(document);
-    }),
+      for (const el of root.querySelectorAll('*')) {
+        if (el.shadowRoot && deepClick(el.shadowRoot)) return true;
+      }
+      return false;
+    }
+    return deepClick(document);
+  });
+
+  // Tentative 1
+  let [newPage, btnFound] = await Promise.all([
+    context.waitForEvent('page', { timeout: 20000 }).catch(() => null),
+    tryClick(),
   ]);
+
+  // Si le bouton n'existe pas du tout → compte sans accès advertiser
+  if (!btnFound) {
+    throw new Error('Bouton "Login As Advertiser" introuvable — compte sans accès advertiser dans Salesforce');
+  }
+
+  // Retry si aucun onglet ne s'est ouvert (clic parfois sans effet)
+  if (!newPage) {
+    log('Pas de nouvel onglet — nouvelle tentative...', 'step');
+    await sleep(2000);
+    [newPage] = await Promise.all([
+      context.waitForEvent('page', { timeout: 15000 }).catch(() => null),
+      tryClick(),
+    ]);
+  }
+
   await sleep(2000);
   const p = newPage || context.pages().find(p => p !== sfPage) || sfPage;
   await p.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
@@ -290,7 +310,7 @@ async function switchToLicenseAccount(page) {
       if (await ok2.isVisible({ timeout: 2000 })) { await ok2.click(); await sleep(500); }
     } catch(e) {}
   } else {
-    await page.screenshot({ path: `screenshots/ideuzo_not_found.png` });
+    await page.screenshot({ path: `screenshots/ideuzo_not_found.png`, timeout: 5000 }).catch(() => {});
     log(`"${LICENSE_ACCOUNT_STR}" non trouvé — recruteur ignoré (compte non éligible)`, 'warn');
     throw new Error(`Compte licences "${LICENSE_ACCOUNT_STR}" non trouvé — recruteur ignoré`);
   }
@@ -346,19 +366,27 @@ async function createOneAlert(page, alert, agencySlug, alertIdx) {
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
     await sleep(3000); // attendre plus longtemps que la page se stabilise
 
-    if (alertIdx === 0) await page.screenshot({ path: `screenshots/search_${agencySlug}.png` });
+    if (alertIdx === 0) await page.screenshot({ path: `screenshots/search_${agencySlug}.png`, timeout: 5000 }).catch(() => {});
 
     const alertLink = page.locator([
       'a:has-text("Configurez une alerte")',
       'button:has-text("Configurez une alerte")',
       'a:has-text("Enregistrer la recherche")',
+      'button:has-text("Enregistrer la recherche")',
+      'a:has-text("Créer une alerte")',
+      'button:has-text("Créer une alerte")',
       'a:has-text("Set up an alert")',
+      'button:has-text("Set up an alert")',
+      'a:has-text("Save search")',
+      'button:has-text("Save search")',
+      'a:has-text("Create alert")',
+      'button:has-text("Create alert")',
     ].join(', ')).first();
 
     // Attendre jusqu'à 10s que le bouton apparaisse (était 6s)
     const visible = await alertLink.waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false);
     if (!visible) {
-      await page.screenshot({ path: `screenshots/no_alert_${agencySlug}_${alertIdx}.png` });
+      await page.screenshot({ path: `screenshots/no_alert_${agencySlug}_${alertIdx}.png`, timeout: 5000 }).catch(() => {});
       log(`  Bouton absent — ${page.url().slice(0, 80)}`, 'warn');
       return { status: 'no_alert_btn', job: alert.job };
     }
@@ -417,7 +445,7 @@ async function createOneAlert(page, alert, agencySlug, alertIdx) {
     // Confirmer le succès : la modal doit être fermée
     const confirmed = await saveBtn.isHidden({ timeout: 3000 }).catch(() => false);
     if (!confirmed) {
-      await page.screenshot({ path: `screenshots/save_failed_${agencySlug}_${alertIdx}.png` });
+      await page.screenshot({ path: `screenshots/save_failed_${agencySlug}_${alertIdx}.png`, timeout: 5000 }).catch(() => {});
       log(`  ⚠️  Modal toujours ouverte après 3 tentatives`, 'warn');
       return { status: 'save_failed', job: alert.job };
     }
