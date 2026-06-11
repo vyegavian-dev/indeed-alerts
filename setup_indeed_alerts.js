@@ -202,29 +202,43 @@ const isCaptchaPage = url =>
 // Détecter un CAPTCHA dans le contenu de la page (même si l'URL ne change pas)
 async function hasCaptchaInPage(page) {
   return await page.evaluate(() => {
-    // Indices visuels/textuels d'un CAPTCHA
-    const txt = (document.body?.innerText || '').toLowerCase();
-    const textSignals = [
-      'vérifiez que vous êtes',
-      'verify you are human',
-      'verify you\'re human',
-      'i\'m not a robot',
-      'je ne suis pas un robot',
-      'security check',
-      'vérification de sécurité',
-      'unusual traffic',
-      'trafic inhabituel',
-      'press and hold',
-      'appuyez et maintenez',
-    ];
-    if (textSignals.some(s => txt.includes(s))) return true;
+    // 1. Éléments DOM spécifiques aux CAPTCHA (signaux forts et fiables)
+    if (document.querySelector('#px-captcha, .px-captcha, [id^="datadome"], .h-captcha, #challenge-running, #challenge-stage')) {
+      return true;
+    }
 
-    // iframes de CAPTCHA connus
+    // 2. iframes de CAPTCHA actives ET visibles
     const iframes = Array.from(document.querySelectorAll('iframe'));
-    if (iframes.some(f => /recaptcha|arkose|funcaptcha|hcaptcha|datadome|px-captcha/i.test(f.src || ''))) return true;
+    const captchaFrame = iframes.find(f => {
+      if (!/recaptcha\/api2\/bframe|arkose|funcaptcha|hcaptcha\.com\/captcha|datadome|geo\.captcha/i.test(f.src || '')) return false;
+      const rect = f.getBoundingClientRect();
+      return rect.width > 100 && rect.height > 100; // iframe réellement affichée
+    });
+    if (captchaFrame) return true;
 
-    // Éléments DataDome / PerimeterX / hCaptcha
-    if (document.querySelector('#px-captcha, .px-captcha, [id*="datadome"], .h-captcha, .g-recaptcha, #challenge-running')) return true;
+    // 3. reCAPTCHA checkbox visible (pas juste le script chargé en arrière-plan)
+    const grecaptcha = document.querySelector('.g-recaptcha');
+    if (grecaptcha) {
+      const rect = grecaptcha.getBoundingClientRect();
+      if (rect.width > 50 && rect.height > 50) return true;
+    }
+
+    // 4. Texte de blocage — UNIQUEMENT si la page est quasi vide (vraie page de challenge,
+    //    pas une page de résultats qui contiendrait ces mots dans un menu/footer)
+    const txt = (document.body?.innerText || '').toLowerCase();
+    const bodyLen = txt.length;
+    if (bodyLen < 1500) {
+      const strongSignals = [
+        'press and hold',
+        'appuyez et maintenez',
+        'verify you are human',
+        "verify you're human",
+        'vérifiez que vous êtes un humain',
+        'unusual traffic from your',
+        'trafic inhabituel',
+      ];
+      if (strongSignals.some(s => txt.includes(s))) return true;
+    }
 
     return false;
   }).catch(() => false);
