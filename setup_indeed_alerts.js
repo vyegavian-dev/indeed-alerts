@@ -189,7 +189,7 @@ async function clickLoginAsAdvertiser(context, sfPage) {
 // ─── ATTENDRE FIN DU LOGIN (auto, sans ENTRÉE) ───────────────────────────────
 
 // ─── DÉTECTION CAPTCHA ────────────────────────────────────────────────────────
-// Surveille en continu si un CAPTCHA apparaît et attend que l'utilisateur le résolve
+// Surveille si un CAPTCHA apparaît (URL OU contenu de page) et attend la résolution
 
 const isCaptchaPage = url =>
   url.includes('captcha') ||
@@ -199,25 +199,61 @@ const isCaptchaPage = url =>
   url.includes('funcaptcha') ||
   url.includes('datadome');
 
+// Détecter un CAPTCHA dans le contenu de la page (même si l'URL ne change pas)
+async function hasCaptchaInPage(page) {
+  return await page.evaluate(() => {
+    // Indices visuels/textuels d'un CAPTCHA
+    const txt = (document.body?.innerText || '').toLowerCase();
+    const textSignals = [
+      'vérifiez que vous êtes',
+      'verify you are human',
+      'verify you\'re human',
+      'i\'m not a robot',
+      'je ne suis pas un robot',
+      'security check',
+      'vérification de sécurité',
+      'unusual traffic',
+      'trafic inhabituel',
+      'press and hold',
+      'appuyez et maintenez',
+    ];
+    if (textSignals.some(s => txt.includes(s))) return true;
+
+    // iframes de CAPTCHA connus
+    const iframes = Array.from(document.querySelectorAll('iframe'));
+    if (iframes.some(f => /recaptcha|arkose|funcaptcha|hcaptcha|datadome|px-captcha/i.test(f.src || ''))) return true;
+
+    // Éléments DataDome / PerimeterX / hCaptcha
+    if (document.querySelector('#px-captcha, .px-captcha, [id*="datadome"], .h-captcha, .g-recaptcha, #challenge-running')) return true;
+
+    return false;
+  }).catch(() => false);
+}
+
 async function waitForCaptchaIfNeeded(page) {
   const url = page.url();
-  if (!isCaptchaPage(url)) return;
+  const inPage = await hasCaptchaInPage(page);
+  if (!isCaptchaPage(url) && !inPage) return;
 
   log('⚠️  CAPTCHA détecté ! Résous-le dans le navigateur.', 'warn');
   log('Le script reprend automatiquement une fois le CAPTCHA résolu.', 'warn');
-  const deadline = Date.now() + 300_000; // 5 min max
+  // Bip sonore pour alerter
+  process.stdout.write('\x07');
+
+  const deadline = Date.now() + 600_000; // 10 min max
   while (Date.now() < deadline) {
-    await sleep(1500);
+    await sleep(2000);
     try {
       const current = page.url();
-      if (!isCaptchaPage(current)) {
+      const stillCaptcha = isCaptchaPage(current) || await hasCaptchaInPage(page);
+      if (!stillCaptcha) {
         log('CAPTCHA résolu ✓', 'success');
-        await sleep(1000);
+        await sleep(1500);
         return;
       }
     } catch(e) { break; }
   }
-  log('Timeout CAPTCHA — poursuite du script', 'warn');
+  log('Timeout CAPTCHA (10 min) — poursuite du script', 'warn');
 }
 
 async function waitUntilLoggedIn(page) {
@@ -377,7 +413,21 @@ async function createOneAlert(page, alert, agencySlug, alertIdx, country = 'FR',
     ].join(', ')).first();
 
     // Attendre jusqu'à 10s que le bouton apparaisse (était 6s)
-    const visible = await alertLink.waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false);
+    let visible = await alertLink.waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false);
+
+    // Si bouton absent, re-vérifier si c'est un CAPTCHA qui bloque (et non 0 résultats)
+    if (!visible) {
+      const captcha = await hasCaptchaInPage(page);
+      if (captcha) {
+        await waitForCaptchaIfNeeded(page);
+        // Recharger la recherche après résolution et réessayer
+        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+        await sleep(2500);
+        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+        visible = await alertLink.waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false);
+      }
+    }
+
     if (!visible) {
       await page.screenshot({ path: `screenshots/no_alert_${agencySlug}_${alertIdx}.png`, timeout: 5000 }).catch(() => {});
       log(`  Bouton absent — ${page.url().slice(0, 80)}`, 'warn');
