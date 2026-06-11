@@ -20,6 +20,11 @@ const SINGLE_AGENCY = (() => { const i = process.argv.indexOf('--agency'); retur
 const LIMIT         = (() => { const i = process.argv.indexOf('--limit');  return i !== -1 ? parseInt(process.argv[i+1]) : null; })();
 const FROM          = (() => { const i = process.argv.indexOf('--from');   return i !== -1 ? parseInt(process.argv[i+1]) - 1 : 0; })(); // 1-based
 
+// Anti-CAPTCHA : pause longue tous les BATCH_SIZE alertes (réglable via --batch et --pause)
+const BATCH_SIZE    = (() => { const i = process.argv.indexOf('--batch'); return i !== -1 ? parseInt(process.argv[i+1]) : 25; })();
+const PAUSE_MS      = (() => { const i = process.argv.indexOf('--pause'); return i !== -1 ? parseInt(process.argv[i+1]) * 1000 : 90000; })(); // défaut 90s
+let   globalAlertCount = 0;
+
 const SALESFORCE_URL          = 'https://indeedinc.lightning.force.com/lightning/n/IndeedAccountSearch';
 const RESUMES_URL             = 'https://resumes.indeed.com/?co=FR&hl=fr&prevCo=FR';
 // LICENSE_ACCOUNT_PATTERN est lu dynamiquement depuis alerts_data.json (champ licenseAccount)
@@ -469,6 +474,7 @@ async function main() {
   if (FROM > 0 && !SINGLE_AGENCY) log(`Départ depuis recruteur #${FROM + 1}`, 'info');
   log(`${agencies.length} recruteur(s) — ${agencies.reduce((s,a)=>s+a.alerts.length,0)} alertes`, 'info');
   log(`Compte licences : "${LICENSE_ACCOUNT_STR}"`, 'info');
+  log(`Anti-CAPTCHA : pause de ${Math.round(PAUSE_MS/1000)}s toutes les ${BATCH_SIZE} alertes`, 'info');
 
   const browser  = await chromium.launch({
     headless: false,
@@ -542,7 +548,19 @@ async function main() {
         if (['success','dry_run'].includes(r.status)) agRep.success++;
         else if (r.status === 'no_alert_btn')         agRep.skipped++;
         else                                          agRep.errors++;
-        await sleep(1500 + Math.random() * 1500); // délai aléatoire 1.5-3s
+
+        // Compteur global d'alertes traitées
+        globalAlertCount++;
+
+        // Pause longue anti-CAPTCHA tous les BATCH_SIZE alertes
+        if (globalAlertCount % BATCH_SIZE === 0) {
+          const pauseSec = Math.round(PAUSE_MS / 1000);
+          log(`⏸️  Pause anti-CAPTCHA de ${pauseSec}s (${globalAlertCount} alertes traitées)...`, 'step');
+          await sleep(PAUSE_MS);
+          log('▶️  Reprise', 'step');
+        }
+
+        await sleep(2000 + Math.random() * 2000); // délai aléatoire 2-4s
       }
 
 
