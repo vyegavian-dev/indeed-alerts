@@ -338,72 +338,17 @@ async function createOneAlert(page, alert, agencySlug, alertIdx, country = 'FR',
   if (DRY_RUN) return { status: 'dry_run', job: alert.job };
 
   try {
-    const resumesUrl = `https://resumes.indeed.com/?co=${country}&hl=${lang}&prevCo=${country}`;
-    await page.goto(resumesUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await sleep(2000);
+    // Navigation directe vers la page de résultats via URL — plus fiable que remplir les champs
+    // Format : resumes.indeed.com/search?q=REQUETE&l=VILLE&co=PAYS&hl=LANGUE
+    const q = encodeURIComponent(alert.query);
+    const l = encodeURIComponent(alert.location || '');
+    const searchUrl = `https://resumes.indeed.com/search?q=${q}&l=${l}&co=${country}&hl=${lang}&radius=${alert.radius || 25}`;
+
+    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await sleep(2500);
     await waitForCaptchaIfNeeded(page); // CAPTCHA éventuel après navigation
-
-    const what = page.locator([
-      'input[placeholder*="Intitulé"]', 'input[placeholder*="intitulé"]',
-      'input[placeholder*="poste"]',    'input[placeholder*="compétences"]',
-      'input[placeholder*="emploi"]',   'input[id*="what"]',
-      'input[name*="what"]',            'input[placeholder*="keyword"]',
-      'input[placeholder*="title"]',    'input[placeholder*="skill"]',
-      'input[placeholder*="functie"]',  'input[placeholder*="vaardigheden"]',
-    ].join(', ')).first();
-
-    await what.waitFor({ state: 'visible', timeout: 15000 });
-    // Triple clic + Ctrl+A + Delete pour vider complètement (évite l'autocomplete Indeed)
-    await what.click({ clickCount: 3 });
-    await page.keyboard.press('Control+a');
-    await page.keyboard.press('Delete');
-    await sleep(300);
-    await what.fill(alert.query);
-    await sleep(500);
-    // Échapper l'autocomplete si ouvert
-    await page.keyboard.press('Escape');
-    await sleep(200);
-
-    const where = page.locator([
-      'input[placeholder*="Ville"]', 'input[placeholder*="ville"]',
-      'input[placeholder*="département"]', 'input[id*="where"]', 'input[name*="where"]',
-    ].join(', ')).first();
-
-    if (await where.isVisible().catch(() => false)) {
-      await where.click({ clickCount: 3 });
-      await where.fill('');
-      await where.type(alert.location, { delay: 15 });
-      await sleep(800);
-      const sugg = page.locator('[role="option"]:first-child, [role="listbox"] li:first-child').first();
-      if (await sugg.isVisible().catch(() => false)) await sugg.click();
-      else await page.keyboard.press('Escape');
-      await sleep(300);
-    }
-
-    // Cliquer "Rechercher" / "Search" / "Zoeken" — multi-langue + fallback Enter
-    const searchBtn = page.locator([
-      'button:has-text("Rechercher")',
-      'button:has-text("Search")',
-      'button:has-text("Zoeken")',
-      'button[type="submit"]',
-      '[data-cauto-id*="search"]',
-      'button[aria-label*="Rechercher"]',
-      'button[aria-label*="Search"]',
-    ].join(', ')).first();
-
-    const btnVisible = await searchBtn.isVisible({ timeout: 3000 }).catch(() => false);
-    if (btnVisible) {
-      await searchBtn.click().catch(async () => {
-        // Si le clic est intercepté, forcer via JS puis Enter
-        await searchBtn.evaluate(el => el.click()).catch(() => {});
-      });
-    } else {
-      // Aucun bouton trouvé → valider la recherche avec Enter dans le champ
-      log('  Bouton Rechercher absent — fallback Enter', 'step');
-      await what.press('Enter').catch(() => {});
-    }
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await sleep(3000); // attendre plus longtemps que la page se stabilise
+    await sleep(2000);
 
     if (alertIdx === 0) await page.screenshot({ path: `screenshots/search_${agencySlug}.png`, timeout: 5000 }).catch(() => {});
 
