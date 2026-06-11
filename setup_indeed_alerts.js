@@ -115,6 +115,21 @@ async function sfFillAndSearch(sfPage, email) {
 
   log(`Email saisi : ${email}`, 'success');
   await sleep(400);
+
+  // Cliquer le bouton "Search" dans le shadow DOM (en plus de Enter pour fiabilité)
+  await sfPage.evaluate(() => {
+    function deepFindAll(root, sel) {
+      const r = [];
+      root.querySelectorAll(sel).forEach(el => r.push(el));
+      root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) r.push(...deepFindAll(el.shadowRoot, sel)); });
+      return r;
+    }
+    const btns = deepFindAll(document, 'button, [role="button"], input[type="submit"]');
+    const searchBtn = btns.find(b => /^\s*(search|rechercher)\s*$/i.test(b.textContent || b.value || ''));
+    if (searchBtn) { searchBtn.removeAttribute('tabindex'); searchBtn.click(); }
+  }).catch(() => {});
+
+  await sleep(400);
   await sfPage.keyboard.press('Enter');
   await sleep(4000);
 }
@@ -365,7 +380,28 @@ async function createOneAlert(page, alert, agencySlug, alertIdx, country = 'FR',
       await sleep(300);
     }
 
-    await page.locator('button:has-text("Rechercher"), button[type="submit"]').first().click();
+    // Cliquer "Rechercher" / "Search" / "Zoeken" — multi-langue + fallback Enter
+    const searchBtn = page.locator([
+      'button:has-text("Rechercher")',
+      'button:has-text("Search")',
+      'button:has-text("Zoeken")',
+      'button[type="submit"]',
+      '[data-cauto-id*="search"]',
+      'button[aria-label*="Rechercher"]',
+      'button[aria-label*="Search"]',
+    ].join(', ')).first();
+
+    const btnVisible = await searchBtn.isVisible({ timeout: 3000 }).catch(() => false);
+    if (btnVisible) {
+      await searchBtn.click().catch(async () => {
+        // Si le clic est intercepté, forcer via JS puis Enter
+        await searchBtn.evaluate(el => el.click()).catch(() => {});
+      });
+    } else {
+      // Aucun bouton trouvé → valider la recherche avec Enter dans le champ
+      log('  Bouton Rechercher absent — fallback Enter', 'step');
+      await what.press('Enter').catch(() => {});
+    }
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
     await sleep(3000); // attendre plus longtemps que la page se stabilise
 
