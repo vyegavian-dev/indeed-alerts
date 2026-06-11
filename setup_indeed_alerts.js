@@ -318,12 +318,13 @@ async function switchToLicenseAccount(page) {
 
 // ─── CRÉER UNE ALERTE ────────────────────────────────────────────────────────
 
-async function createOneAlert(page, alert, agencySlug, alertIdx) {
+async function createOneAlert(page, alert, agencySlug, alertIdx, country = 'FR', lang = 'fr') {
   log(`  "${alert.job}"`, 'step');
   if (DRY_RUN) return { status: 'dry_run', job: alert.job };
 
   try {
-    await page.goto(RESUMES_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const resumesUrl = `https://resumes.indeed.com/?co=${country}&hl=${lang}&prevCo=${country}`;
+    await page.goto(resumesUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
     await sleep(2000);
     await waitForCaptchaIfNeeded(page); // CAPTCHA éventuel après navigation
 
@@ -332,6 +333,8 @@ async function createOneAlert(page, alert, agencySlug, alertIdx) {
       'input[placeholder*="poste"]',    'input[placeholder*="compétences"]',
       'input[placeholder*="emploi"]',   'input[id*="what"]',
       'input[name*="what"]',            'input[placeholder*="keyword"]',
+      'input[placeholder*="title"]',    'input[placeholder*="skill"]',
+      'input[placeholder*="functie"]',  'input[placeholder*="vaardigheden"]',
     ].join(', ')).first();
 
     await what.waitFor({ state: 'visible', timeout: 15000 });
@@ -381,6 +384,10 @@ async function createOneAlert(page, alert, agencySlug, alertIdx) {
       'button:has-text("Save search")',
       'a:has-text("Create alert")',
       'button:has-text("Create alert")',
+      'a:has-text("Zoekopdracht opslaan")',
+      'button:has-text("Zoekopdracht opslaan")',
+      'a:has-text("Melding instellen")',
+      'button:has-text("Melding instellen")',
     ].join(', ')).first();
 
     // Attendre jusqu'à 10s que le bouton apparaisse (était 6s)
@@ -419,7 +426,7 @@ async function createOneAlert(page, alert, agencySlug, alertIdx) {
     // ── Cliquer Enregistrer ───────────────────────────────────────────────────
     // On cible par data-cauto-id (sélecteur stable) en priorité
     const saveBtn = page.locator('[data-cauto-id="serp_saved-search-modal_save-button"]')
-      .or(page.locator('button:has-text("Enregistrer"), button:has-text("Save")').first());
+      .or(page.locator('button:has-text("Enregistrer"), button:has-text("Save"), button:has-text("Opslaan")').first());
     await saveBtn.waitFor({ state: 'visible', timeout: 8000 });
 
     // 1ère tentative : clic JS (bypass onetrust overlay)
@@ -549,7 +556,7 @@ async function main() {
 
       for (let j = 0; j < ag.alerts.length; j++) {
         log(`[${j+1}/${ag.alerts.length}]`, 'info');
-        const r = await createOneAlert(indeedPage, ag.alerts[j], agSlug, j);
+        const r = await createOneAlert(indeedPage, ag.alerts[j], agSlug, j, ag.country || 'FR', ag.lang || 'fr');
         agRep.results.push(r);
         if (['success','dry_run'].includes(r.status)) agRep.success++;
         else if (r.status === 'no_alert_btn')         agRep.skipped++;
