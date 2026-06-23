@@ -1,5 +1,5 @@
 /**
- * Indeed Smart Sourcing — Alertes CV v13
+ * Indeed Smart Sourcing — Alertes CV v14
  * npm init -y && npm install playwright && npx playwright install chromium
  * node setup_indeed_alerts.js --agency "email@domaine.com"
  */
@@ -424,6 +424,13 @@ async function createOneAlert(page, alert, agencySlug, alertIdx, country = 'FR',
       'button:has-text("Zoekopdracht opslaan")',
       'a:has-text("Melding instellen")',
       'button:has-text("Melding instellen")',
+      // NL — libellé réel sur Indeed Smart Sourcing : « Stel een cv-alert in »
+      'a:has-text("Stel een cv-alert in")',
+      'button:has-text("Stel een cv-alert in")',
+      'a:has-text("cv-alert in")',
+      'button:has-text("cv-alert in")',
+      'a:has-text("cv-alert instellen")',
+      'button:has-text("cv-alert instellen")',
     ].join(', ')).first();
 
     // Attendre jusqu'à 10s que le bouton apparaisse (était 6s)
@@ -476,8 +483,17 @@ async function createOneAlert(page, alert, agencySlug, alertIdx, country = 'FR',
     // ── Cliquer Enregistrer ───────────────────────────────────────────────────
     // On cible par data-cauto-id (sélecteur stable) en priorité
     const saveBtn = page.locator('[data-cauto-id="serp_saved-search-modal_save-button"]')
-      .or(page.locator('button:has-text("Enregistrer"), button:has-text("Save"), button:has-text("Opslaan")').first());
-    await saveBtn.waitFor({ state: 'visible', timeout: 8000 });
+      .or(page.locator('button:has-text("Enregistrer"), button:has-text("Save"), button:has-text("Opslaan"), button:has-text("Instellen"), button:has-text("Cv-alert instellen")').first());
+
+    // L'enregistrement peut ne pas passer par une modal : sur certains comptes NL
+    // (« Stel een cv-alert in »), l'alerte est créée directement au clic. Si aucun
+    // bouton d'enregistrement n'apparaît, on considère l'alerte créée.
+    const hasSaveBtn = await saveBtn.waitFor({ state: 'visible', timeout: 6000 }).then(() => true).catch(() => false);
+    if (!hasSaveBtn) {
+      await sleep(1000);
+      log(`  ✅ "${alert.job}" (création directe)`, 'success');
+      return { status: 'success', job: alert.job };
+    }
 
     // 1ère tentative : clic JS (bypass onetrust overlay)
     await saveBtn.evaluate(el => el.click());
@@ -523,7 +539,7 @@ async function createOneAlert(page, alert, agencySlug, alertIdx, country = 'FR',
 
 async function main() {
   console.log('\n══════════════════════════════════════════════════════════════');
-  console.log('  🎯  Indeed — Alertes CV Smart Sourcing  [v13]');
+  console.log('  🎯  Indeed — Alertes CV Smart Sourcing  [v14]');
   console.log('══════════════════════════════════════════════════════════════\n');
 
   let agencies = ALERTS_DATA.slice(FROM);
