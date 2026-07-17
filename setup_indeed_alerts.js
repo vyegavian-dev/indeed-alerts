@@ -1,5 +1,5 @@
 /**
- * Indeed Smart Sourcing — Alertes CV v14
+ * Indeed Smart Sourcing — Alertes CV v15
  * npm init -y && npm install playwright && npx playwright install chromium
  * node setup_indeed_alerts.js --agency "email@domaine.com"
  */
@@ -483,7 +483,7 @@ async function createOneAlert(page, alert, agencySlug, alertIdx, country = 'FR',
     // ── Cliquer Enregistrer ───────────────────────────────────────────────────
     // On cible par data-cauto-id (sélecteur stable) en priorité
     const saveBtn = page.locator('[data-cauto-id="serp_saved-search-modal_save-button"]')
-      .or(page.locator('button:has-text("Enregistrer"), button:has-text("Save"), button:has-text("Opslaan"), button:has-text("Instellen"), button:has-text("Cv-alert instellen")').first());
+      .or(page.locator('[role="dialog"] button:has-text("Enregistrer"), [role="dialog"] button:has-text("Save"), [role="dialog"] button:has-text("Opslaan"), [role="dialog"] button:has-text("Instellen"), .modal button:has-text("Enregistrer")').first());
 
     // L'enregistrement peut ne pas passer par une modal : sur certains comptes NL
     // (« Stel een cv-alert in »), l'alerte est créée directement au clic. Si aucun
@@ -539,7 +539,7 @@ async function createOneAlert(page, alert, agencySlug, alertIdx, country = 'FR',
 
 async function main() {
   console.log('\n══════════════════════════════════════════════════════════════');
-  console.log('  🎯  Indeed — Alertes CV Smart Sourcing  [v14]');
+  console.log('  🎯  Indeed — Alertes CV Smart Sourcing  [v15]');
   console.log('══════════════════════════════════════════════════════════════\n');
 
   let agencies = ALERTS_DATA.slice(FROM);
